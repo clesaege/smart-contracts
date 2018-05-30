@@ -81,12 +81,14 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
     // Constructor fields
     uint public MANAGEMENT_FEE_RATE; // Fee rate in QUOTE_ASSET per delta improvement in WAD
     uint public PERFORMANCE_FEE_RATE; // Fee rate in QUOTE_ASSET per managed seconds in WAD
+    uint public PERFORMANCE_FREQUENCY; // Frequency of performane fee calculation
     address public VERSION; // Address of Version contract
     Asset public QUOTE_ASSET; // QUOTE asset as ERC20 contract
     // Methods fields
     Modules public modules; // Struct which holds all the initialised module instances
     Exchange[] public exchanges; // Array containing exchanges this fund supports
     Calculations public atLastUnclaimedFeeAllocation; // Calculation results at last allocateUnclaimedFees() call
+    Calculations public atLastHighWaterMarkUpdate; // Calculation results at last highWaterMark update
     Order[] public orders;  // append-only list of makes/takes from this fund
     mapping (address => mapping(address => OpenMakeOrder)) public exchangesToOpenMakeOrders; // exchangeIndex to: asset to open make orders
     bool public isShutDown; // Security feature, if yes than investing, managing, allocateUnclaimedFees gets blocked
@@ -117,6 +119,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         address ofQuoteAsset,
         uint ofManagementFee,
         uint ofPerformanceFee,
+        uint ofPerformanceFrequency,
         address ofCompliance,
         address ofRiskMgmt,
         address ofPriceFeed,
@@ -131,6 +134,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         owner = ofManager;
         MANAGEMENT_FEE_RATE = ofManagementFee; // 1 percent is expressed as 0.01 * 10 ** 18
         PERFORMANCE_FEE_RATE = ofPerformanceFee; // 1 percent is expressed as 0.01 * 10 ** 18
+        PERFORMANCE_FREQUENCY = ofPerformanceFrequency;
         VERSION = msg.sender;
         modules.compliance = ComplianceInterface(ofCompliance);
         modules.riskmgmt = RiskMgmtInterface(ofRiskMgmt);
@@ -155,6 +159,16 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             isInvestAllowed[ofDefaultAssets[j]] = true;
         }
         atLastUnclaimedFeeAllocation = Calculations({
+            gav: 0,
+            managementFee: 0,
+            performanceFee: 0,
+            unclaimedFees: 0,
+            nav: 0,
+            highWaterMark: 10 ** getDecimals(),
+            totalSupply: _totalSupply,
+            timestamp: now
+        });
+        atLastHighWaterMarkUpdate = Calculations({
             gav: 0,
             managementFee: 0,
             performanceFee: 0,
@@ -232,7 +246,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         external
         pre_cond(!isShutDown)
         pre_cond(requests[id].status == RequestStatus.active)
-        //pre_cond(requests[id].shareQuantity <= balances[requests[id].participant]) // request owner does not own enough shares
+        // pre_cond(requests[id].shareQuantity <= balances[requests[id].participant]) // request owner does not own enough shares
         pre_cond(
             _totalSupply == 0 ||
             (
@@ -248,7 +262,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         require(isRecent);
 
         // sharePrice quoted in QUOTE_ASSET and multiplied by 10 ** fundDecimals
-        uint costQuantity = toWholeShareUnit(mul(request.shareQuantity, calcSharePriceAndAllocateFees())); // By definition quoteDecimals == fundDecimals
+        uint costQuantity = toWholeShareUnit(mul(request.shareQuantity, calcSharePriceAndAllocateFees(msg.sender))); // By definition quoteDecimals == fundDecimals
         if (request.requestAsset != address(QUOTE_ASSET)) {
             var (isPriceRecent, invertedRequestAssetPrice, requestAssetDecimal) = modules.pricefeed.getInvertedPriceInfo(request.requestAsset);
             if (!isPriceRecent) {
@@ -446,12 +460,10 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
       "unclaimedfees": "The sum of both managementfee and performancefee in QUOTE_ASSET and multiplied by 10 ** shareDecimals"
     }
     */
-    function calcUnclaimedFees(uint gav)
+    function calcUnclaimedFees(address redeemingInvestor, uint gav, bool isHighWaterMarkUpdate)
         view
         returns (
-            uint managementFee,
-            uint performanceFee,
-            uint unclaimedFees)
+            uint managementFee, uint performanceFee, uint unclaimedFees)
     {
         // Management fee calculation
         uint timePassed = sub(now, atLastUnclaimedFeeAllocation.timestamp);
@@ -460,11 +472,14 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
 
         // Performance fee calculation
         // Handle potential division through zero by defining a default value
-        uint valuePerShareExclMgmtFees = _totalSupply > 0 ? calcValuePerShare(sub(gav, managementFee), _totalSupply) : toSmallestShareUnit(1);
-        if (valuePerShareExclMgmtFees > atLastUnclaimedFeeAllocation.highWaterMark) {
-            uint gainInSharePrice = sub(valuePerShareExclMgmtFees, atLastUnclaimedFeeAllocation.highWaterMark);
-            uint investmentProfits = wmul(gainInSharePrice, _totalSupply);
-            performanceFee = wmul(investmentProfits, PERFORMANCE_FEE_RATE);
+        if (redeemingInvestor != address(0) || isHighWaterMarkUpdate) {
+            uint valuePerShareExclMgmtFees = _totalSupply > 0 ? calcValuePerShare(sub(gav, managementFee), _totalSupply) : toSmallestShareUnit(1);
+            if (valuePerShareExclMgmtFees > atLastHighWaterMarkUpdate.highWaterMark) {
+                uint accountableShares = isHighWaterMarkUpdate ? _totalSupply : balances[redeemingInvestor];
+                uint gainInSharePrice = sub(valuePerShareExclMgmtFees, atLastHighWaterMarkUpdate.highWaterMark);
+                uint investmentProfits = wmul(gainInSharePrice, accountableShares);
+                performanceFee = wmul(investmentProfits, PERFORMANCE_FEE_RATE);
+            }
         }
 
         // Sum of all FEES
@@ -508,7 +523,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
       "sharePrice": "Share price denominated in [base unit of melonAsset]"
     }
     */
-    function performCalculations()
+    function performCalculations(address redeemingInvestor, bool isHighWaterMarkUpdate)
         view
         returns (
             uint gav,
@@ -521,19 +536,22 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         )
     {
         gav = calcGav(); // Reflects value independent of fees
-        (managementFee, performanceFee, unclaimedFees) = calcUnclaimedFees(gav);
+        (managementFee, performanceFee, unclaimedFees) = calcUnclaimedFees(redeemingInvestor, gav, isHighWaterMarkUpdate);
         nav = calcNav(gav, unclaimedFees);
 
         // The value of unclaimedFees measured in shares of this fund at current value
         feesShareQuantity = (gav == 0) ? 0 : mul(_totalSupply, unclaimedFees) / gav;
         // The total share supply including the value of unclaimedFees, measured in shares of this fund
-         uint totalSupplyAccountingForFees = add(_totalSupply, feesShareQuantity);
+        uint totalSupplyAccountingForFees = add(_totalSupply, feesShareQuantity);
         sharePrice = _totalSupply > 0 ? calcValuePerShare(gav, totalSupplyAccountingForFees) : toSmallestShareUnit(1); // Handle potential division through zero by defining a default value
     }
 
     /// @notice Converts unclaimed fees of the manager into fund shares
     /// @return sharePrice Share price denominated in [base unit of melonAsset]
-    function calcSharePriceAndAllocateFees() public returns (uint)
+    function calcSharePriceAndAllocateFees(address redeemingInvestor)
+        public
+        pre_cond(msg.sender == address(this) || redeemingInvestor == address(0))
+        returns (uint)
     {
         var (
             gav,
@@ -543,13 +561,48 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             feesShareQuantity,
             nav,
             sharePrice
-        ) = performCalculations();
+        ) = performCalculations(redeemingInvestor, false);
 
         createShares(owner, feesShareQuantity); // Updates _totalSupply by creating shares allocated to manager
 
         // Update Calculations
-        uint highWaterMark = atLastUnclaimedFeeAllocation.highWaterMark >= sharePrice ? atLastUnclaimedFeeAllocation.highWaterMark : sharePrice;
         atLastUnclaimedFeeAllocation = Calculations({
+            gav: gav,
+            managementFee: managementFee,
+            performanceFee: performanceFee,
+            unclaimedFees: unclaimedFees,
+            nav: nav,
+            highWaterMark: atLastHighWaterMarkUpdate.highWaterMark,
+            totalSupply: _totalSupply,
+            timestamp: now
+        });
+
+        FeesConverted(now, feesShareQuantity, unclaimedFees);
+        CalculationUpdate(now, managementFee, performanceFee, nav, sharePrice, _totalSupply);
+
+        return sharePrice;
+    }
+
+    /// @notice Calculates highwatermark and converts performance fee
+    function calculateHighWaterMark()
+        public
+        pre_cond(sub(now, atLastHighWaterMarkUpdate.timestamp) >= PERFORMANCE_FREQUENCY)
+    {
+        var (
+            gav,
+            managementFee,
+            performanceFee,
+            unclaimedFees,
+            feesShareQuantity,
+            nav,
+            sharePrice
+        ) = performCalculations(address(0), true);
+
+        uint highWaterMark = atLastHighWaterMarkUpdate.highWaterMark >= sharePrice ? atLastUnclaimedFeeAllocation.highWaterMark : sharePrice;
+        createShares(owner, feesShareQuantity); // Updates _totalSupply by creating shares allocated to manager
+
+        // Update Calculations
+        atLastHighWaterMarkUpdate = Calculations({
             gav: gav,
             managementFee: managementFee,
             performanceFee: performanceFee,
@@ -559,11 +612,6 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             totalSupply: _totalSupply,
             timestamp: now
         });
-
-        FeesConverted(now, feesShareQuantity, unclaimedFees);
-        CalculationUpdate(now, managementFee, performanceFee, nav, sharePrice, _totalSupply);
-
-        return sharePrice;
     }
 
     // PUBLIC : REDEEMING
@@ -659,7 +707,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
     /// @notice Calculates sharePrice denominated in [base unit of melonAsset]
     /// @return sharePrice Share price denominated in [base unit of melonAsset]
     function calcSharePrice() view returns (uint sharePrice) {
-        (, , , , , sharePrice) = performCalculations();
+        (, , , , , sharePrice) = performCalculations(address(0), false);
         return sharePrice;
     }
 
