@@ -2,28 +2,30 @@
 set -ex
 
 PARITY_VERSION=1.8.10
+SOLIDITY_VERSION=0.4.21
 
 # install dependencies and compiler
 sudo add-apt-repository -y ppa:ethereum/ethereum
 sudo apt-get update
-sudo apt-get install ethereum software-properties-common openssl libssl-dev libudev-dev solc snapd
+sudo apt-get install ethereum software-properties-common openssl libssl-dev libudev-dev
+
+
+SOLIDITY_DOWNLOAD=https://github.com/ethereum/solidity/releases/download/v${SOLIDITY_VERSION}/solc-static-linux
 
 # install parity
-sudo snap install parity
-# PARITY_DOWNLOAD=https://parity-downloads-mirror.parity.io/v${PARITY_VERSION}/x86_64-unknown-linux-gnu/parity
+PARITY_DOWNLOAD=https://parity-downloads-mirror.parity.io/v${PARITY_VERSION}/x86_64-unknown-linux-gnu/parity
 
 # Fetch parity
-# curl -L $PARITY_DOWNLOAD > parity
+curl -L $PARITY_DOWNLOAD > parity
+curl -L $SOLIDITY_DOWNLOAD > solc
 
-# Install parity
-# chmod +x parity
-# sudo mv parity /usr/bin
+# Install parity and solidity compiler 
+chmod +x parity
+sudo mv parity /usr/bin
+chmod +x solc
+sudo mv solc /usr/bin
 
 # install dapp
-wget https://github.com/dapphub/ethrun/releases/download/v0.2.4/ethrun-v0.2.4-linux.tar.gz
-tar -xvf ethrun-v0.2.4-linux.tar.gz
-sudo cp ethrun /usr/local/bin/
-
 curl https://nixos.org/nix/install | sh
 source $HOME/.nix-profile/etc/profile.d/nix.sh
 nix-channel --add https://nix.dapphub.com/pkgs/dapphub
