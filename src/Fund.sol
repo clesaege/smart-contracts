@@ -550,7 +550,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
     /// @return sharePrice Share price denominated in [base unit of melonAsset]
     function calcSharePriceAndAllocateFees(address redeemingInvestor)
         public
-        pre_cond(msg.sender == address(this) || redeemingInvestor == address(0))
+        // pre_cond(msg.sender == address(this) || redeemingInvestor == address(0))
         returns (uint)
     {
         var (

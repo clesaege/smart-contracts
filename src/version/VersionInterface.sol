@@ -18,6 +18,7 @@ interface VersionInterface {
         address ofQuoteAsset,
         uint ofManagementFee,
         uint ofPerformanceFee,
+        uint ofPerformanceFrequency,
         address ofCompliance,
         address ofRiskMgmt,
         address[] ofExchanges,
