@@ -262,7 +262,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         require(isRecent);
 
         // sharePrice quoted in QUOTE_ASSET and multiplied by 10 ** fundDecimals
-        uint costQuantity = toWholeShareUnit(mul(request.shareQuantity, calcSharePriceAndAllocateFees(msg.sender))); // By definition quoteDecimals == fundDecimals
+        uint costQuantity = toWholeShareUnit(mul(request.shareQuantity, calcSharePrice())); // By definition quoteDecimals == fundDecimals
         if (request.requestAsset != address(QUOTE_ASSET)) {
             var (isPriceRecent, invertedRequestAssetPrice, requestAssetDecimal) = modules.pricefeed.getInvertedPriceInfo(request.requestAsset);
             if (!isPriceRecent) {
@@ -305,7 +305,11 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         external
         returns (bool success)
     {
-        return emergencyRedeem(shareQuantity, ownedAssets);
+        var ( , , , , feesShareQuantity, , ) = performCalculations();
+        uint feesSharesToDeduct = mul(feesShareQuantity, shareQuantity) / _totalSupply;
+        annihilateShares(msg.sender, feesSharesToDeduct);
+        createShares(owner, feesSharesToDeduct);
+        return emergencyRedeem(sub(shareQuantity, feesSharesToDeduct), ownedAssets);
     }
 
     // EXTERNAL : MANAGING
@@ -460,7 +464,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
       "unclaimedfees": "The sum of both managementfee and performancefee in QUOTE_ASSET and multiplied by 10 ** shareDecimals"
     }
     */
-    function calcUnclaimedFees(address redeemingInvestor, uint gav, bool isHighWaterMarkUpdate)
+    function calcUnclaimedFees(uint gav)
         view
         returns (
             uint managementFee, uint performanceFee, uint unclaimedFees)
@@ -472,14 +476,11 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
 
         // Performance fee calculation
         // Handle potential division through zero by defining a default value
-        if (redeemingInvestor != address(0) || isHighWaterMarkUpdate) {
-            uint valuePerShareExclMgmtFees = _totalSupply > 0 ? calcValuePerShare(sub(gav, managementFee), _totalSupply) : toSmallestShareUnit(1);
-            if (valuePerShareExclMgmtFees > atLastHighWaterMarkUpdate.highWaterMark) {
-                uint accountableShares = isHighWaterMarkUpdate ? _totalSupply : balances[redeemingInvestor];
-                uint gainInSharePrice = sub(valuePerShareExclMgmtFees, atLastHighWaterMarkUpdate.highWaterMark);
-                uint investmentProfits = wmul(gainInSharePrice, accountableShares);
-                performanceFee = wmul(investmentProfits, PERFORMANCE_FEE_RATE);
-            }
+        uint valuePerShareExclMgmtFees = _totalSupply > 0 ? calcValuePerShare(sub(gav, managementFee), _totalSupply) : toSmallestShareUnit(1);
+        if (valuePerShareExclMgmtFees > atLastUnclaimedFeeAllocation.highWaterMark) {
+            uint gainInSharePrice = sub(valuePerShareExclMgmtFees, atLastUnclaimedFeeAllocation.highWaterMark);
+            uint investmentProfits = wmul(gainInSharePrice, _totalSupply);
+            performanceFee = wmul(investmentProfits, PERFORMANCE_FEE_RATE);
         }
 
         // Sum of all FEES
@@ -523,7 +524,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
       "sharePrice": "Share price denominated in [base unit of melonAsset]"
     }
     */
-    function performCalculations(address redeemingInvestor, bool isHighWaterMarkUpdate)
+    function performCalculations()
         view
         returns (
             uint gav,
@@ -536,7 +537,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         )
     {
         gav = calcGav(); // Reflects value independent of fees
-        (managementFee, performanceFee, unclaimedFees) = calcUnclaimedFees(redeemingInvestor, gav, isHighWaterMarkUpdate);
+        (managementFee, performanceFee, unclaimedFees) = calcUnclaimedFees(gav);
         nav = calcNav(gav, unclaimedFees);
 
         // The value of unclaimedFees measured in shares of this fund at current value
@@ -548,9 +549,8 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
 
     /// @notice Converts unclaimed fees of the manager into fund shares
     /// @return sharePrice Share price denominated in [base unit of melonAsset]
-    function calcSharePriceAndAllocateFees(address redeemingInvestor)
+    function calcSharePrice()
         public
-        // pre_cond(msg.sender == address(this) || redeemingInvestor == address(0))
         returns (uint)
     {
         var (
@@ -561,9 +561,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             feesShareQuantity,
             nav,
             sharePrice
-        ) = performCalculations(redeemingInvestor, false);
-
-        createShares(owner, feesShareQuantity); // Updates _totalSupply by creating shares allocated to manager
+        ) = performCalculations();
 
         // Update Calculations
         atLastUnclaimedFeeAllocation = Calculations({
@@ -577,7 +575,6 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             timestamp: now
         });
 
-        FeesConverted(now, feesShareQuantity, unclaimedFees);
         CalculationUpdate(now, managementFee, performanceFee, nav, sharePrice, _totalSupply);
 
         return sharePrice;
@@ -596,7 +593,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             feesShareQuantity,
             nav,
             sharePrice
-        ) = performCalculations(address(0), true);
+        ) = performCalculations();
 
         uint highWaterMark = atLastHighWaterMarkUpdate.highWaterMark >= sharePrice ? atLastUnclaimedFeeAllocation.highWaterMark : sharePrice;
         createShares(owner, feesShareQuantity); // Updates _totalSupply by creating shares allocated to manager
@@ -703,13 +700,6 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
     }
 
     // PUBLIC VIEW METHODS
-
-    /// @notice Calculates sharePrice denominated in [base unit of melonAsset]
-    /// @return sharePrice Share price denominated in [base unit of melonAsset]
-    function calcSharePrice() view returns (uint sharePrice) {
-        (, , , , , sharePrice) = performCalculations(address(0), false);
-        return sharePrice;
-    }
 
     function getModules() view returns (address, address, address) {
         return (

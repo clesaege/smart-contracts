@@ -3,7 +3,7 @@ import test from "ava";
 import api from "../../utils/lib/api";
 import { retrieveContract } from "../../utils/lib/contracts";
 import deployEnvironment from "../../utils/deploy/contracts";
-import calcSharePriceAndAllocateFees from "../../utils/lib/calcSharePriceAndAllocateFees";
+import calcSharePrice from "../../utils/lib/calcSharePrice";
 import getAllBalances from "../../utils/lib/getAllBalances";
 import { getTermsSignatureParameters } from "../../utils/lib/signing";
 import { updateCanonicalPriceFeed } from "../../utils/lib/updatePriceFeed";
@@ -66,6 +66,7 @@ test.serial("can set up new fund", async t => {
       ethToken.address, // base asset
       config.protocol.fund.managementFee,
       config.protocol.fund.performanceFee,
+      10,
       deployed.NoCompliance.address,
       deployed.RMMakeOrders.address,
       [deployed.MatchingMarket.address],
@@ -171,7 +172,7 @@ test.serial.skip('direct transfer of a token to the Fund is rejected', async t =
 
 // TODO: this one may be more suitable to a unit test
 // TODO: remove skip when we re-introduce fund name tracking
-test.serial(
+test.serial.skip(
   "a new fund with a name used before cannot be created",
   async t => {
     const [r, s, v] = await getTermsSignatureParameters(deployer);
@@ -222,7 +223,7 @@ async function calculateOfferValue(wantedShares) {
   ] = await pricefeed.instance.getInvertedPriceInfo.call({}, [
     mlnToken.address
   ]);
-  const sharePrice = await fund.instance.calcSharePriceAndAllocateFees.call({}, []);
+  const sharePrice = await fund.instance.calcSharePrice.call({}, []);
   const sharesWorth = await fund.instance.toWholeShareUnit.call({}, [sharePrice.mul(wantedShares)]);
   return new BigNumber(Math.floor(sharesWorth.mul(invertedPrice).div(10 ** assetDecimals)));
 }
@@ -489,7 +490,7 @@ subsequentTests.forEach(testInstance => {
   });
 
   test.serial("management fee calculated correctly", async t => {
-    const timestamp = await calcSharePriceAndAllocateFees(
+    const timestamp = await calcSharePrice(
       fund,
       manager,
       config,

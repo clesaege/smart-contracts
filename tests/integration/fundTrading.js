@@ -933,7 +933,7 @@ test.serial("converts fees and manager receives them", async t => {
   const pre = await getAllBalances(deployed, accounts, fund);
   const preManagerShares = await fund.instance.balanceOf.call({}, [manager]);
   const totalSupply = await fund.instance.totalSupply.call({}, []);
-  txId = await fund.instance.calcSharePriceAndAllocateFees.postTransaction(
+  txId = await fund.instance.calcSharePrice.postTransaction(
     { from: manager, gas: config.gas, gasPrice: config.gasPrice },
     [],
   );

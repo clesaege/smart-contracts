@@ -3,7 +3,7 @@ import test from "ava";
 import api from "../../utils/lib/api";
 import { retrieveContract } from "../../utils/lib/contracts";
 import deployEnvironment from "../../utils/deploy/contracts";
-import calcSharePriceAndAllocateFees from "../../utils/lib/calcSharePriceAndAllocateFees";
+import calcSharePrice from "../../utils/lib/calcSharePrice";
 import getAllBalances from "../../utils/lib/getAllBalances";
 import { getTermsSignatureParameters } from "../../utils/lib/signing";
 import { updateCanonicalPriceFeed } from "../../utils/lib/updatePriceFeed";
