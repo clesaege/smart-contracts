@@ -32,6 +32,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         uint performanceFee; // Performance based fee measured against QUOTE_ASSET
         uint unclaimedFees; // Fees not yet allocated to the fund manager
         uint nav; // Net asset value
+        uint sharePrice; // Share price
         uint highWaterMark; // A record of best all-time fund performance
         uint totalSupply; // Total supply of shares
         uint timestamp; // Time when calculations are performed in seconds
@@ -164,6 +165,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             performanceFee: 0,
             unclaimedFees: 0,
             nav: 0,
+            sharePrice: toSmallestShareUnit(1),
             highWaterMark: 10 ** getDecimals(),
             totalSupply: _totalSupply,
             timestamp: now
@@ -174,6 +176,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             performanceFee: 0,
             unclaimedFees: 0,
             nav: 0,
+            sharePrice: toSmallestShareUnit(1),
             highWaterMark: 10 ** getDecimals(),
             totalSupply: _totalSupply,
             timestamp: now
@@ -477,8 +480,8 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         // Performance fee calculation
         // Handle potential division through zero by defining a default value
         uint valuePerShareExclMgmtFees = _totalSupply > 0 ? calcValuePerShare(sub(gav, managementFee), _totalSupply) : toSmallestShareUnit(1);
-        if (valuePerShareExclMgmtFees > atLastUnclaimedFeeAllocation.highWaterMark) {
-            uint gainInSharePrice = sub(valuePerShareExclMgmtFees, atLastUnclaimedFeeAllocation.highWaterMark);
+        if (valuePerShareExclMgmtFees > atLastHighWaterMarkUpdate.highWaterMark) {
+            uint gainInSharePrice = sub(valuePerShareExclMgmtFees, atLastHighWaterMarkUpdate.highWaterMark);
             uint investmentProfits = wmul(gainInSharePrice, _totalSupply);
             performanceFee = wmul(investmentProfits, PERFORMANCE_FEE_RATE);
         }
@@ -545,6 +548,21 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
         // The total share supply including the value of unclaimedFees, measured in shares of this fund
         uint totalSupplyAccountingForFees = add(_totalSupply, feesShareQuantity);
         sharePrice = _totalSupply > 0 ? calcValuePerShare(gav, totalSupplyAccountingForFees) : toSmallestShareUnit(1); // Handle potential division through zero by defining a default value
+
+        // Update Calculations
+        atLastUnclaimedFeeAllocation = Calculations({
+            gav: gav,
+            managementFee: managementFee,
+            performanceFee: performanceFee,
+            unclaimedFees: unclaimedFees,
+            nav: nav,
+            sharePrice: sharePrice,
+            highWaterMark: atLastHighWaterMarkUpdate.highWaterMark,
+            totalSupply: _totalSupply,
+            timestamp: now
+        });
+
+        CalculationUpdate(now, managementFee, performanceFee, nav, sharePrice, _totalSupply);
     }
 
     /// @notice Converts unclaimed fees of the manager into fund shares
@@ -562,20 +580,6 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             nav,
             sharePrice
         ) = performCalculations();
-
-        // Update Calculations
-        atLastUnclaimedFeeAllocation = Calculations({
-            gav: gav,
-            managementFee: managementFee,
-            performanceFee: performanceFee,
-            unclaimedFees: unclaimedFees,
-            nav: nav,
-            highWaterMark: atLastHighWaterMarkUpdate.highWaterMark,
-            totalSupply: _totalSupply,
-            timestamp: now
-        });
-
-        CalculationUpdate(now, managementFee, performanceFee, nav, sharePrice, _totalSupply);
 
         return sharePrice;
     }
@@ -595,7 +599,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             sharePrice
         ) = performCalculations();
 
-        uint highWaterMark = atLastHighWaterMarkUpdate.highWaterMark >= sharePrice ? atLastUnclaimedFeeAllocation.highWaterMark : sharePrice;
+        uint highWaterMark = atLastHighWaterMarkUpdate.highWaterMark >= sharePrice ? atLastHighWaterMarkUpdate.highWaterMark : sharePrice;
         createShares(owner, feesShareQuantity); // Updates _totalSupply by creating shares allocated to manager
 
         // Update Calculations
@@ -605,6 +609,7 @@ contract Fund is DSMath, DBC, Owned, Shares, FundInterface {
             performanceFee: performanceFee,
             unclaimedFees: unclaimedFees,
             nav: nav,
+            sharePrice: sharePrice,
             highWaterMark: highWaterMark,
             totalSupply: _totalSupply,
             timestamp: now
