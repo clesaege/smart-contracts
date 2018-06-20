@@ -3,6 +3,7 @@ import api from "../../../utils/lib/api";
 import { deployContract } from "../../../utils/lib/contracts";
 import deployEnvironment from "../../../utils/deploy/contracts";
 import createStakingFeed from "../../../utils/lib/createStakingFeed";
+import getChainTime from "../../../utils/lib/getChainTime";
 
 const environmentConfig = require("../../../utils/config/environment.js");
 const BigNumber = require("bignumber.js");
@@ -516,4 +517,35 @@ test("only governance is allowed to call burnStake", async t => {
   t.deepEqual(stakedAmountAfter, stakedAmountBefore);
   t.true(isOperatorBefore);
   t.true(isOperatorAfter);
+});
+
+/* eslint-disable no-await-in-loop */
+test("Fetch price at specific timestamp", async t => {
+  await createPriceFeedAndStake(t.context);
+  await createPriceFeedAndStake(t.context);
+  await registerEur(t.context.canonicalPriceFeed);
+  const numberOfIterations = 5;
+  let prices = [];
+  let timestamps = [];
+
+  for (let step = 0; step < numberOfIterations; step += 1) {
+    prices.push(new BigNumber(10 ** 18).mul(Math.floor(Math.random() * 6) + 1));
+    for (let i = 0; i < t.context.pricefeeds.length; i += 1) {
+      await t.context.pricefeeds[i].instance.update.postTransaction(
+        { from: accounts[0], gas: 6000000 },
+        [[mlnToken.address, eurToken.address], [defaultMlnPrice, prices[step]]],
+      );
+    }
+    await t.context.canonicalPriceFeed.instance.collectAndUpdate.postTransaction(opts, [[mlnToken.address, eurToken.address]]);
+    const blockTime = await getChainTime();
+    timestamps.push(blockTime);
+
+    const priceAtTimeStamp = await t.context.canonicalPriceFeed.instance.getPriceAtTimestamp.call({}, [eurToken.address, blockTime]);
+    // const priceJustBeforeTimestamp = await t.context.canonicalPriceFeed.instance.getPriceAtTimestamp.call({}, [eurToken.address, blockTime - 1]);
+    const pricesInRange = (await t.context.canonicalPriceFeed.instance.getPricesInRange.call({}, [eurToken.address, 0, blockTime])).map(e => e._value);
+
+    t.deepEqual(priceAtTimeStamp, prices[step]);
+    // if (step !== 0) t.deepEqual(priceJustBeforeTimestamp, prices[step - 1]);
+    t.deepEqual(pricesInRange, prices);
+  }
 });

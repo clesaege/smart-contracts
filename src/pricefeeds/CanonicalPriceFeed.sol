@@ -165,6 +165,8 @@ contract CanonicalPriceFeed is OperatorStaking, SimplePriceFeed, CanonicalRegist
         _updatePrices(ofAssets, newPrices);
     }
 
+    /// @dev New prices to be committed on the next update
+    /// @param ofAssets list of asset addresses
     function pricesToCommit(address[] ofAssets)
         view
         returns (uint[])
@@ -389,12 +391,79 @@ contract CanonicalPriceFeed is OperatorStaking, SimplePriceFeed, CanonicalRegist
         return ofPriceFeeds;
     }
 
-    function getHistoryLength() returns (uint) { return priceHistory.length; }
+    function getHistoryLength() view returns (uint) { return priceHistory.length; }
 
-    function getHistoryAt(uint id) returns (address[], uint[], uint) {
+    function getHistoryAt(uint id) view returns (address[], uint[], uint) {
         address[] memory assets = priceHistory[id].assets;
         uint[] memory prices = priceHistory[id].prices;
         uint timestamp = priceHistory[id].timestamp;
         return (assets, prices, timestamp);
     }
+
+    function getPriceAtTimestamp(address ofAsset, uint timestamp) view returns (uint) {
+        uint256 length = priceHistory.length;
+        uint assetIndex;
+
+        if (length == 0 || timestamp < priceHistory[0].timestamp) {
+            return 0;
+        }
+
+        if (timestamp >= priceHistory[length-1].timestamp) {
+            assetIndex = searchAssetIndex(priceHistory[length-1].assets, ofAsset);
+            return priceHistory[length-1].prices[assetIndex];
+        }
+
+        uint min = searchPriceIndex(timestamp, 0, length-1);
+
+        HistoricalPrices dataAtTimestamp = priceHistory[min];
+        assetIndex = searchAssetIndex(dataAtTimestamp.assets, ofAsset);
+
+
+        return dataAtTimestamp.prices[assetIndex];
+    }
+
+    function getPricesInRange(address ofAsset, uint startTimestamp, uint endTimestamp) view returns (uint[]) {
+        require(endIndex >= startIndex);
+
+        uint startIndex = searchPriceIndex(startTimestamp, 0, priceHistory.length - 1);
+        uint endIndex = searchPriceIndex(endTimestamp, startIndex, priceHistory.length - 1);
+        uint[] memory prices = new uint[](endIndex - startIndex + 1);
+
+        // Store in memory array
+        for (uint i = startIndex; i <= endIndex; i++) {
+            uint assetIndex = searchAssetIndex(priceHistory[i].assets, ofAsset);
+            prices[i - startIndex] = priceHistory[i].prices[assetIndex];
+        }
+
+        return prices;
+    }
+
+    function searchPriceIndex(uint timestamp, uint startIndex, uint endIndex) internal view returns (uint) {
+        require(startIndex < priceHistory.length && endIndex < priceHistory.length);
+        require(endIndex >= startIndex);
+
+        uint min = startIndex;
+        uint max = endIndex;
+        while (max > min) {
+            uint mid = (max + min + 1) / 2;
+            if (priceHistory[mid].timestamp <= timestamp) {
+                min = mid;
+            } else {
+                max = mid-1;
+            }
+        }
+        return min;
+    }
+
+    function searchAssetIndex(address[] storage listOfAssets, address ofAsset) internal view returns (uint) {
+        bool foundIndex;
+        for (uint i = 0; i < listOfAssets.length; i++) {
+            if (listOfAssets[i] == ofAsset) {
+                foundIndex = true;
+                return i;
+            }
+        }
+        require(foundIndex);
+    }
+
 }
