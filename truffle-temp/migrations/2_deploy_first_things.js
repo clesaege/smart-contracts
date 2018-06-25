@@ -1,6 +1,7 @@
 /* eslint-disable */
 // const ourConfig = require("./ourConfig.js");
 const fs = require('fs');
+require('web3');
 // import * as masterConfig from "../../utils/config/environment";
 
 const PreminedAsset = artifacts.require("PreminedAsset");
@@ -128,7 +129,10 @@ module.exports = function(deployer, network, accounts) {
 
       // whitelist exchange
       const canonicalPriceFeedInstance = await CanonicalPriceFeed.deployed();
-      /*
+      const makeOrderSignature = web3.sha3('makeOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
+      const takeOrderSignature = web3.sha3('takeOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
+      const cancelOrderSignature = web3.sha3('takeOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
+
       await governanceAction(
         governanceInstance, canonicalPriceFeedInstance, 'registerExchange',
         [
@@ -142,7 +146,7 @@ module.exports = function(deployer, network, accounts) {
           ]
         ]
       );
-      */
+
       // register assets
       await governanceAction(governanceInstance, canonicalPriceFeedInstance, 'registerAsset', [
         MlnToken.address,
@@ -182,6 +186,5 @@ async function governanceAction(governance, target, methodName, methodArgs = [],
   const calldata = await target[methodName].request(...methodArgs).params[0].data;
   await governance.propose(target.address, calldata, value);
   const proposalId = await governance.actionCount.call();
-  await governance.confirm(proposalId);
-  await governance.trigger(proposalId);
+  await governance.confirm(proposalId);  await governance.trigger(proposalId);
 }
