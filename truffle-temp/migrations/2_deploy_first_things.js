@@ -131,7 +131,7 @@ module.exports = function(deployer, network, accounts) {
       const canonicalPriceFeedInstance = await CanonicalPriceFeed.deployed();
       const makeOrderSignature = web3.sha3('makeOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
       const takeOrderSignature = web3.sha3('takeOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
-      const cancelOrderSignature = web3.sha3('takeOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
+      const cancelOrderSignature = web3.sha3('cancelOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
 
       await governanceAction(
         governanceInstance, canonicalPriceFeedInstance, 'registerExchange',
