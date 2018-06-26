@@ -21,6 +21,8 @@ const FundRanking = artifacts.require("FundRanking");
 const Competition = artifacts.require("Competition");
 
 const tokenInfoFileName = "./tokenInfo.config";
+const addressBookFile = "./addressBook.json";
+
 const mockBytes = "0x86b5eed81db5f691c36cc83eb58cb5205bd2090bf3763a19f0c5bf2f074dd84b";
 const mockAddress = "0x083c41ea13af6c2d5aaddf6e73142eb9a7b00183";
 
@@ -59,18 +61,14 @@ const config = {
 module.exports = function(deployer, network, accounts) {
   deployer.then(async () => {
     // const config = masterConfig[network];
+    const deployed = {};
     if (network === "development") {
-      const EthToken = await deployer.new(PreminedAsset);
-      const MlnToken = await deployer.new(PreminedAsset);
-      const EurToken = await deployer.new(PreminedAsset);
-      const tokenAddresses = {
-        "EthToken": EthToken.address,
-        "MlnToken": MlnToken.address,
-        "EurToken": EurToken.address
-      };
-      const governance = await deployer.deploy(Governance, [accounts[0]], 1, 100000);
-      await deployer.deploy(CanonicalPriceFeed, MlnToken.address,
-        EthToken.address,
+      deployed.EthToken = await deployer.new(PreminedAsset);
+      deployed.MlnToken = await deployer.new(PreminedAsset);
+      deployed.EurToken = await deployer.new(PreminedAsset);
+      deployed.Governance = await deployer.deploy(Governance, [accounts[0]], 1, 100000);
+      deployed.CanonicalPriceFeed = await deployer.deploy(CanonicalPriceFeed, deployed.MlnToken.address,
+        deployed.EthToken.address,
         mockBytes,
         '0x99ABD417',
         18,
@@ -88,56 +86,52 @@ module.exports = function(deployer, network, accounts) {
           config.protocol.staking.numOperators,
           config.protocol.staking.unstakeDelay
         ],
-        governance.address,
+        deployed.Governance.address,
         {gas: 100000000}
       );
-      await deployer.deploy(SimpleMarket);
-      await deployer.deploy(SimpleAdapter);
-      await deployer.deploy(MatchingMarket, 154630446100);
-      await deployer.deploy(MatchingMarketAdapter);
-      await deployer.deploy(NoCompliance);
-      await deployer.deploy(RMMakeOrders);
-      await deployer.deploy(CentralizedAdapter);
-      await deployer.deploy(CompetitionCompliance, accounts[0]);
-      await deployer.deploy(Version, "2", Governance.address, MlnToken.address, EthToken.address, CanonicalPriceFeed.address, CompetitionCompliance.address);
-      await deployer.deploy(FundRanking);
-      const stakingPriceFeedInstance = await createStakingFeed(await CanonicalPriceFeed.deployed());
-      const blockchainTime = Math.floor(new Date().valueOf() / 1000);
-      await deployer.deploy(Competition, MlnToken.address, EurToken.address, EthToken.address, accounts[5], blockchainTime, blockchainTime + 8640000, 20 * 10 ** 18, 10 ** 23, 10, false);
+      deployed.SimpleMarket = await deployer.deploy(SimpleMarket);
+      deployed.SimpleAdapter = await deployer.deploy(SimpleAdapter);
+      deployed.MatchingMarket= await deployer.deploy(MatchingMarket, 154630446100);
+      deployed.MatchingMarketAdapter = await deployer.deploy(MatchingMarketAdapter);
+      deployed.NoCompliance = await deployer.deploy(NoCompliance);
+      deployed.RMMakeOrders = await deployer.deploy(RMMakeOrders);
+      deployed.CentralizedAdapter = await deployer.deploy(CentralizedAdapter);
+      deployed.CompetitionCompliance = await deployer.deploy(CompetitionCompliance, accounts[0]);
+      deployed.Version = await deployer.deploy(Version, "2", deployed.Governance.address, deployed.MlnToken.address, deployed.EthToken.address, deployed.CanonicalPriceFeed.address, deployed.CompetitionCompliance.address);
+      deployed.FundRanking = await deployer.deploy(FundRanking);
+      deployed.StakingPriceFeed = await createStakingFeed(await CanonicalPriceFeed.deployed());
 
-      const competitionComplianceInstance = await CompetitionCompliance.deployed();
-      await competitionComplianceInstance.changeCompetitionAddress(Competition.address);
-      const competitionInstance = await Competition.deployed();
-      await competitionInstance.batchAddToWhitelist(10 ** 25, [accounts[0], accounts[1], accounts[2]]);
+      const blockchainTime = Math.floor(new Date().valueOf() / 1000);
+      deployed.Competition = await deployer.deploy(Competition, deployed.MlnToken.address, deployed.EurToken.address, deployed.EthToken.address, accounts[5], blockchainTime, blockchainTime + 8640000, 20 * 10 ** 18, 10 ** 23, 10, false);
+
+      await deployed.CompetitionCompliance.changeCompetitionAddress(deployed.Competition.address);
+      await deployed.Competition.batchAddToWhitelist(10 ** 25, [accounts[0], accounts[1], accounts[2]]);
 
       // whitelist trading pairs
       const pairsToWhitelist = [
-        [MlnToken.address, EthToken.address],
-        [EurToken.address, EthToken.address],
-        [MlnToken.address, EurToken.address],
+        [deployed.MlnToken.address, deployed.EthToken.address],
+        [deployed.EurToken.address, deployed.EthToken.address],
+        [deployed.MlnToken.address, deployed.EurToken.address],
       ];
-      const matchingMarketInstance = await MatchingMarket.deployed();
       await Promise.all(
         pairsToWhitelist.map(async (pair) => {
-          await matchingMarketInstance.addTokenPairWhitelist(pair[0], pair[1]);
+          await deployed.MatchingMarket.addTokenPairWhitelist(pair[0], pair[1]);
         })
       );
 
       // add Version to Governance tracking
-      const governanceInstance = await Governance.deployed();
-      await governanceAction(governanceInstance, governanceInstance, 'addVersion', [Version.address]);
+      await governanceAction(deployed.Governance, deployed.Governance, 'addVersion', [deployed.Version.address]);
 
       // whitelist exchange
-      const canonicalPriceFeedInstance = await CanonicalPriceFeed.deployed();
       const makeOrderSignature = web3.sha3('makeOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
       const takeOrderSignature = web3.sha3('takeOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
       const cancelOrderSignature = web3.sha3('cancelOrder(address,address[5],uint256[8],bytes32,uint8,bytes32,bytes32)').substr(0, 10);;
 
       await governanceAction(
-        governanceInstance, canonicalPriceFeedInstance, 'registerExchange',
+        deployed.Governance, deployed.CanonicalPriceFeed, 'registerExchange',
         [
-          MatchingMarket.address,
-          MatchingMarketAdapter.address,
+          deployed.MatchingMarket.address,
+          deployed.MatchingMarketAdapter.address,
           true,
           [
             makeOrderSignature,
@@ -148,8 +142,8 @@ module.exports = function(deployer, network, accounts) {
       );
 
       // register assets
-      await governanceAction(governanceInstance, canonicalPriceFeedInstance, 'registerAsset', [
-        MlnToken.address,
+      await governanceAction(deployed.Governance, deployed.CanonicalPriceFeed, 'registerAsset', [
+        deployed.MlnToken.address,
         "Melon token",
         "MLN-T",
         18,
@@ -159,8 +153,8 @@ module.exports = function(deployer, network, accounts) {
         [],
         []
       ]);
-      await governanceAction(governanceInstance, canonicalPriceFeedInstance, 'registerAsset', [
-        EurToken.address,
+      await governanceAction(deployed.Governance, deployed.CanonicalPriceFeed, 'registerAsset', [
+        deployed.EurToken.address,
         "Euro token",
         "EUR-T",
         18,
@@ -170,9 +164,8 @@ module.exports = function(deployer, network, accounts) {
         [],
         []
       ]);
-
-      fs.writeFileSync(tokenInfoFileName, JSON.stringify(tokenAddresses, null, '  '));
     }
+    await writeToAddressBook(deployed, network)
   });
 };
 
@@ -187,4 +180,25 @@ async function governanceAction(governance, target, methodName, methodArgs = [],
   await governance.propose(target.address, calldata, value);
   const proposalId = await governance.actionCount.call();
   await governance.confirm(proposalId);  await governance.trigger(proposalId);
+}
+
+// takes `deployed` object as defined above, and environment to write to
+async function writeToAddressBook(deployedContracts, environment) {
+  let addressBook;
+  if (fs.existsSync(addressBookFile)) {
+    addressBook = JSON.parse(fs.readFileSync(addressBookFile));
+  } else addressBook = {};
+
+  const namesToAddresses = {};
+  Object.keys(deployedContracts)
+    .forEach(key => {
+      namesToAddresses[key] = deployedContracts[key].address
+    });
+  addressBook[environment] = namesToAddresses;
+
+  fs.writeFileSync(
+    addressBookFile,
+    JSON.stringify(addressBook, null, '  '),
+    'utf8'
+  );
 }
